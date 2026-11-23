@@ -5,8 +5,8 @@ import { supabase } from '../../lib/supabaseClient';
 
 export default function SellPage() {
   const [products, setProducts] = useState([]);
-  const [selectedProductId, setSelectedProductId] = useState('');
-  const [quantity, setQuantity] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [cart, setCart] = useState([]); // เก็บรายการสินค้าในตะกร้า: [{ product, quantity }]
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState({ type: '', text: '' });
@@ -31,67 +31,90 @@ export default function SellPage() {
     setLoading(false);
   }
 
-  // ค้นหาข้อมูลสินค้าที่ถูกเลือกจาก dropdown
-  const selectedProduct = products.find((p) => p.id === selectedProductId);
-
-  // คำนวณยอดรวมอัตโนมัติ (ราคา x จำนวน)
-  const totalPrice = selectedProduct ? Number(selectedProduct.price) * quantity : 0;
-
-  // จัดการเปลี่ยนสินค้าใน dropdown
-  function handleProductChange(e) {
-    setSelectedProductId(e.target.value);
-    setQuantity(1);
-    setStatusMessage({ type: '', text: '' });
-  }
-
-  // ลดจำนวนสินค้า (ขั้นต่ำ 1)
-  function handleDecrease() {
-    setQuantity((prev) => (prev > 1 ? prev - 1 : 1));
-    setStatusMessage({ type: '', text: '' });
-  }
-
-  // เพิ่มจำนวนสินค้า
-  function handleIncrease() {
-    setQuantity((prev) => prev + 1);
-    setStatusMessage({ type: '', text: '' });
-  }
-
-  // บันทึกการขายและตัดสต็อก
-  async function handleSell(e) {
-    e.preventDefault();
+  // เพิ่มสินค้าลงตะกร้า (ถ้ามีอยู่แล้วให้บวกจำนวนเพิ่ม)
+  function addToCart(product) {
     setStatusMessage({ type: '', text: '' });
 
-    if (!selectedProduct) {
-      setStatusMessage({ type: 'error', text: 'กรุณาเลือกสินค้าที่ต้องการขาย' });
+    if (product.stock <= 0) {
+      setStatusMessage({ type: 'error', text: `สินค้า "${product.name}" หมดสต็อก` });
       return;
     }
 
-    if (quantity <= 0) {
-      setStatusMessage({ type: 'error', text: 'จำนวนที่ขายต้องมากกว่า 0' });
+    setCart((prevCart) => {
+      const existingIndex = prevCart.findIndex((item) => item.product.id === product.id);
+      if (existingIndex > -1) {
+        const currentQty = prevCart[existingIndex].quantity;
+        if (currentQty + 1 > product.stock) {
+          setStatusMessage({
+            type: 'error',
+            text: `สินค้า "${product.name}" มีในสต็อกเพียง ${product.stock} ${product.unit}`,
+          });
+          return prevCart;
+        }
+        const updatedCart = [...prevCart];
+        updatedCart[existingIndex].quantity += 1;
+        return updatedCart;
+      }
+      return [...prevCart, { product, quantity: 1 }];
+    });
+  }
+
+  // ปรับจำนวนสินค้าในตะกร้า (+ หรือ -)
+  function updateCartQuantity(productId, newQty) {
+    setStatusMessage({ type: '', text: '' });
+    if (newQty <= 0) {
+      removeFromCart(productId);
       return;
     }
 
-    // 1. ตรวจสอบสต็อกคงเหลือ
-    if (quantity > selectedProduct.stock) {
-      setStatusMessage({
-        type: 'error',
-        text: `สินค้า "${selectedProduct.name}" คงเหลือไม่เพียงพอ (เหลือ ${selectedProduct.stock} ${selectedProduct.unit})`,
-      });
-      return;
-    }
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.product.id === productId) {
+          if (newQty > item.product.stock) {
+            setStatusMessage({
+              type: 'error',
+              text: `สินค้า "${item.product.name}" มีในสต็อกเพียง ${item.product.stock} ${item.product.unit}`,
+            });
+            return item;
+          }
+          return { ...item, quantity: newQty };
+        }
+        return item;
+      })
+    );
+  }
+
+  // ลบสินค้าออกจากตะกร้า
+  function removeFromCart(productId) {
+    setCart((prevCart) => prevCart.filter((item) => item.product.id !== productId));
+  }
+
+  // คำนวณยอดรวมสุทธิทั้งหมด และจำนวนชิ้นรวม
+  const grandTotal = cart.reduce(
+    (sum, item) => sum + Number(item.product.price) * item.quantity,
+    0
+  );
+  const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  // ยืนยันการขายทั้งหมดในตะกร้า
+  async function handleCheckout() {
+    if (cart.length === 0) return;
 
     setSubmitting(true);
+    setStatusMessage({ type: '', text: '' });
 
-    // 2. บันทึกรายการลงตาราง sales
-    const { error: saleError } = await supabase.from('sales').insert([
-      {
-        product_id: selectedProduct.id,
-        product_name: selectedProduct.name,
-        quantity: quantity,
-        total_price: totalPrice,
-        sold_at: new Date().toISOString(),
-      },
-    ]);
+    const now = new Date().toISOString();
+
+    // 1. เตรียมข้อมูลสำหรับบันทึกลงตาราง sales ทีเดียวทุกรายการ
+    const salesRecords = cart.map((item) => ({
+      product_id: item.product.id,
+      product_name: item.product.name,
+      quantity: item.quantity,
+      total_price: Number(item.product.price) * item.quantity,
+      sold_at: now,
+    }));
+
+    const { error: saleError } = await supabase.from('sales').insert(salesRecords);
 
     if (saleError) {
       setStatusMessage({ type: 'error', text: 'บันทึกการขายไม่สำเร็จ: ' + saleError.message });
@@ -99,180 +122,346 @@ export default function SellPage() {
       return;
     }
 
-    // 3. อัปเดต stock ในตาราง products ให้ลดลงตามจำนวนที่ขาย
-    const newStock = selectedProduct.stock - quantity;
-    const { error: stockError } = await supabase
-      .from('products')
-      .update({ stock: newStock })
-      .eq('id', selectedProduct.id);
+    // 2. ตัดสต็อกสินค้าทีละรายการในตาราง products
+    for (const item of cart) {
+      const newStock = item.product.stock - item.quantity;
+      const { error: stockError } = await supabase
+        .from('products')
+        .update({ stock: newStock })
+        .eq('id', item.product.id);
 
-    if (stockError) {
-      setStatusMessage({
-        type: 'error',
-        text: 'บันทึกยอดขายแล้ว แต่ตัดสต็อกไม่สำเร็จ: ' + stockError.message,
-      });
-    } else {
-      // 4. แสดงข้อความยืนยัน รีเซ็ตฟอร์ม และอัปเดตข้อมูลสินค้าในหน้าเว็บ
-      setStatusMessage({
-        type: 'success',
-        text: `ขาย "${selectedProduct.name}" จำนวน ${quantity} ${selectedProduct.unit} สำเร็จ! (ยอดรวม ${totalPrice.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท)`,
-      });
-      setSelectedProductId('');
-      setQuantity(1);
-      await fetchProducts();
+      if (stockError) {
+        setStatusMessage({
+          type: 'error',
+          text: `บันทึกยอดขายแล้ว แต่ตัดสต็อก "${item.product.name}" ไม่สำเร็จ: ${stockError.message}`,
+        });
+        setSubmitting(false);
+        return;
+      }
     }
 
+    // 3. แจ้งเตือนสำเร็จ ล้างตะกร้า และอัปเดตข้อมูลสินค้าล่าสุด
+    setStatusMessage({
+      type: 'success',
+      text: `ชำระเงินและบันทึกการขายสำเร็จ! (${cart.length} รายการ ยอดรวม ${grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท)`,
+    });
+    setCart([]);
+    await fetchProducts();
     setSubmitting(false);
   }
 
-  return (
-    <div style={{ maxWidth: '560px', margin: '0 auto' }}>
-      <div className="card">
-        <h2>ขายสินค้า</h2>
+  // กรองสินค้าตามคำค้นหา (ชื่อ หรือ SKU)
+  const filteredProducts = products.filter(
+    (p) =>
+      p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.sku && p.sku.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
 
-        {/* กล่องแจ้งเตือนสถานะ (สำเร็จ / ผิดพลาด) */}
-        {statusMessage.text && (
-          <div
+  return (
+    <div>
+      {/* ส่วนที่ 1: แถบสรุปยอดเงินรวมขนาดใหญ่ด้านบนสุด (สำหรับผู้ขายและลูกค้ามองเห็นชัดเจน) */}
+      <div
+        className="card"
+        style={{
+          backgroundColor: '#0f172a',
+          color: '#ffffff',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          padding: '1.25rem 1.75rem',
+        }}
+      >
+        <div>
+          <div style={{ fontSize: '0.95rem', color: '#94a3b8', marginBottom: '0.25rem' }}>
+            ยอดชำระสุทธิ ({cart.length} รายการ / {totalItemsCount} ชิ้น)
+          </div>
+          <div style={{ fontSize: '2.75rem', fontWeight: 800, lineHeight: 1.1, color: '#38bdf8' }}>
+            {grandTotal.toLocaleString('th-TH', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}{' '}
+            <span style={{ fontSize: '1.25rem', fontWeight: 500, color: '#e2e8f0' }}>บาท</span>
+          </div>
+        </div>
+
+        {cart.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setCart([]);
+              setStatusMessage({ type: '', text: '' });
+            }}
             style={{
-              padding: '0.75rem 1rem',
-              borderRadius: '6px',
-              marginBottom: '1.25rem',
-              fontSize: '0.95rem',
-              backgroundColor: statusMessage.type === 'error' ? '#fef2f2' : '#f0fdf4',
-              color: statusMessage.type === 'error' ? 'var(--danger-color)' : 'var(--success-color)',
-              border: `1px solid ${statusMessage.type === 'error' ? '#fecaca' : '#bbf7d0'}`,
+              backgroundColor: '#334155',
+              color: '#f8fafc',
+              padding: '0.6rem 1rem',
+              fontSize: '0.9rem',
             }}
           >
-            {statusMessage.text}
-          </div>
+            ล้างตะกร้าทั้งหมด
+          </button>
         )}
+      </div>
 
-        {loading ? (
-          <p style={{ color: 'var(--text-secondary)' }}>กำลังโหลดรายการสินค้า...</p>
-        ) : (
-          <form onSubmit={handleSell}>
-            {/* ส่วนที่ 1: Dropdown เลือกสินค้า */}
-            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-              <label>เลือกสินค้า *</label>
-              <select
-                value={selectedProductId}
-                onChange={handleProductChange}
-                required
-                style={{ fontSize: '1rem', padding: '0.6rem 0.75rem' }}
-              >
-                <option value="">-- กรุณาเลือกสินค้า --</option>
-                {products.map((product) => (
-                  <option key={product.id} value={product.id} disabled={product.stock <= 0}>
-                    {product.name} —{' '}
-                    {Number(product.price).toLocaleString('th-TH', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}{' '}
-                    บาท (คงเหลือ: {product.stock} {product.unit})
-                  </option>
-                ))}
-              </select>
-            </div>
+      {/* กล่องแจ้งเตือนสถานะ */}
+      {statusMessage.text && (
+        <div
+          style={{
+            padding: '0.85rem 1rem',
+            borderRadius: '8px',
+            marginBottom: '1.25rem',
+            fontWeight: 500,
+            backgroundColor: statusMessage.type === 'error' ? '#fef2f2' : '#f0fdf4',
+            color: statusMessage.type === 'error' ? 'var(--danger-color)' : 'var(--success-color)',
+            border: `1px solid ${statusMessage.type === 'error' ? '#fecaca' : '#bbf7d0'}`,
+          }}
+        >
+          {statusMessage.text}
+        </div>
+      )}
 
-            {/* ส่วนที่ 2: ปุ่มบวกลบจำนวนที่จะขาย */}
-            <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-              <label>จำนวนที่ขาย {selectedProduct ? `(${selectedProduct.unit})` : ''}</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <button
-                  type="button"
-                  onClick={handleDecrease}
-                  disabled={!selectedProduct || quantity <= 1}
-                  style={{
-                    width: '42px',
-                    height: '42px',
-                    fontSize: '1.25rem',
-                    fontWeight: 700,
-                    backgroundColor: '#f1f5f9',
-                    color: '#0f172a',
-                    border: '1px solid var(--border-color)',
-                    padding: 0,
-                  }}
-                >
-                  −
-                </button>
+      {/* ส่วนที่ 2: พื้นที่ทำงานแบ่ง 2 คอลัมน์ ซ้าย (เลือกสินค้า) - ขวา (รายการในบิล) */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+          gap: '1.5rem',
+          alignItems: 'start',
+        }}
+      >
+        {/* ฝั่งซ้าย: ค้นหาและกดเลือกสินค้า */}
+        <div className="card" style={{ marginBottom: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h2 style={{ marginBottom: 0 }}>1. เลือกสินค้า</h2>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>แตะเพื่อเพิ่มลงบิล</span>
+          </div>
 
-                <input
-                  type="number"
-                  min="1"
-                  value={quantity}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    setQuantity(isNaN(val) || val < 1 ? 1 : val);
-                  }}
-                  style={{
-                    width: '90px',
-                    height: '42px',
-                    textAlign: 'center',
-                    fontSize: '1.1rem',
-                    fontWeight: 600,
-                  }}
-                />
+          <input
+            type="text"
+            placeholder="ค้นหาชื่อสินค้า หรือ SKU..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ width: '100%', marginBottom: '1rem', padding: '0.6rem 0.85rem' }}
+          />
 
-                <button
-                  type="button"
-                  onClick={handleIncrease}
-                  disabled={!selectedProduct}
-                  style={{
-                    width: '42px',
-                    height: '42px',
-                    fontSize: '1.25rem',
-                    fontWeight: 700,
-                    backgroundColor: '#f1f5f9',
-                    color: '#0f172a',
-                    border: '1px solid var(--border-color)',
-                    padding: 0,
-                  }}
-                >
-                  +
-                </button>
-
-                {selectedProduct && (
-                  <span style={{ marginLeft: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                    คงเหลือในสต็อก: <strong>{selectedProduct.stock}</strong> {selectedProduct.unit}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* ส่วนที่ 3: แสดงยอดรวมอัตโนมัติ */}
+          {loading ? (
+            <p style={{ color: 'var(--text-secondary)' }}>กำลังโหลดรายการสินค้า...</p>
+          ) : filteredProducts.length === 0 ? (
+            <p style={{ color: 'var(--text-secondary)' }}>ไม่พบสินค้าที่ค้นหา</p>
+          ) : (
             <div
               style={{
-                backgroundColor: '#f8fafc',
-                border: '1px solid var(--border-color)',
-                borderRadius: '8px',
-                padding: '1rem 1.25rem',
-                marginBottom: '1.5rem',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(145px, 1fr))',
+                gap: '0.75rem',
+                maxHeight: '460px',
+                overflowY: 'auto',
+                paddingRight: '0.25rem',
               }}
             >
-              <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>ยอดรวมสุทธิ</span>
-              <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--primary-color)' }}>
-                {totalPrice.toLocaleString('th-TH', {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}{' '}
-                บาท
-              </span>
-            </div>
+              {filteredProducts.map((product) => {
+                const isOutOfStock = product.stock <= 0;
+                const inCartItem = cart.find((item) => item.product.id === product.id);
 
-            {/* ส่วนที่ 4: ปุ่มยืนยันการขาย */}
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={!selectedProduct || submitting}
-              style={{ width: '100%', padding: '0.75rem', fontSize: '1.05rem' }}
+                return (
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() => addToCart(product)}
+                    disabled={isOutOfStock}
+                    style={{
+                      textAlign: 'left',
+                      padding: '0.85rem',
+                      borderRadius: '8px',
+                      border: inCartItem
+                        ? '2px solid var(--primary-color)'
+                        : '1px solid var(--border-color)',
+                      backgroundColor: isOutOfStock ? '#f1f5f9' : inCartItem ? '#eff6ff' : '#ffffff',
+                      opacity: isOutOfStock ? 0.6 : 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      minHeight: '105px',
+                      position: 'relative',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#0f172a', marginBottom: '0.25rem' }}>
+                        {product.name}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        {product.sku ? `SKU: ${product.sku}` : ''}
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '0.75rem' }}>
+                      <div style={{ fontWeight: 700, color: 'var(--primary-color)', fontSize: '1rem' }}>
+                        {Number(product.price).toLocaleString('th-TH', { minimumFractionDigits: 2 })} ฿
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '0.75rem',
+                          color: isOutOfStock ? 'var(--danger-color)' : 'var(--text-secondary)',
+                        }}
+                      >
+                        {isOutOfStock ? 'สินค้าหมด' : `เหลือ ${product.stock} ${product.unit}`}
+                      </div>
+                    </div>
+
+                    {/* ป้ายบอกจำนวนที่อยู่ในตะกร้าแล้ว */}
+                    {inCartItem && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: '-8px',
+                          right: '-8px',
+                          backgroundColor: 'var(--primary-color)',
+                          color: '#fff',
+                          borderRadius: '999px',
+                          padding: '0.15rem 0.55rem',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {inCartItem.quantity}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ฝั่งขวา: รายการสินค้าในบิลปัจจุบัน และปุ่มยืนยัน */}
+        <div className="card" style={{ marginBottom: 0 }}>
+          <h2>2. รายการในบิลปัจจุบัน</h2>
+
+          {cart.length === 0 ? (
+            <div
+              style={{
+                textAlign: 'center',
+                padding: '3rem 1rem',
+                color: 'var(--text-secondary)',
+                backgroundColor: '#f8fafc',
+                borderRadius: '8px',
+                border: '1px dashed var(--border-color)',
+              }}
             >
-              {submitting ? 'กำลังบันทึกรายการ...' : 'ขาย'}
-            </button>
-          </form>
-        )}
+              ยังไม่มีสินค้าในบิล
+              <br />
+              <span style={{ fontSize: '0.85rem' }}>กรุณาเลือกสินค้าจากรายการด้านซ้าย</span>
+            </div>
+          ) : (
+            <>
+              <div style={{ maxHeight: '360px', overflowY: 'auto', marginBottom: '1.25rem' }}>
+                {cart.map((item) => {
+                  const subtotal = Number(item.product.price) * item.quantity;
+
+                  return (
+                    <div
+                      key={item.product.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '0.75rem 0',
+                        borderBottom: '1px solid var(--border-color)',
+                        gap: '0.5rem',
+                      }}
+                    >
+                      {/* ชื่อสินค้าและราคาต่อหน่วย */}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{item.product.name}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          {Number(item.product.price).toLocaleString('th-TH', { minimumFractionDigits: 2 })} ฿ /{' '}
+                          {item.product.unit}
+                        </div>
+                      </div>
+
+                      {/* ปุ่มปรับจำนวน - / + */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity(item.product.id, item.quantity - 1)}
+                          style={{
+                            width: '30px',
+                            height: '30px',
+                            padding: 0,
+                            backgroundColor: '#f1f5f9',
+                            border: '1px solid var(--border-color)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          −
+                        </button>
+                        <span style={{ minWidth: '28px', textAlign: 'center', fontWeight: 600 }}>
+                          {item.quantity}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity(item.product.id, item.quantity + 1)}
+                          style={{
+                            width: '30px',
+                            height: '30px',
+                            padding: 0,
+                            backgroundColor: '#f1f5f9',
+                            border: '1px solid var(--border-color)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      {/* ราคารวมย่อยของรายการนี้ */}
+                      <div style={{ minWidth: '85px', textAlign: 'right', fontWeight: 700 }}>
+                        {subtotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                      </div>
+
+                      {/* ปุ่มลบรายการ */}
+                      <button
+                        type="button"
+                        onClick={() => removeFromCart(item.product.id)}
+                        title="ลบรายการ"
+                        style={{
+                          backgroundColor: 'transparent',
+                          color: 'var(--danger-color)',
+                          padding: '0.25rem 0.45rem',
+                          fontSize: '1rem',
+                          fontWeight: 700,
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ปุ่มยืนยันการขาย */}
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleCheckout}
+                disabled={submitting}
+                style={{
+                  width: '100%',
+                  padding: '0.95rem',
+                  fontSize: '1.15rem',
+                  fontWeight: 700,
+                  backgroundColor: 'var(--success-color)',
+                }}
+              >
+                {submitting
+                  ? 'กำลังบันทึกการขาย...'
+                  : `ยืนยันการขาย (${grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท)`}
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
