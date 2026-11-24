@@ -6,12 +6,11 @@ import { supabase } from '../../lib/supabaseClient';
 export default function SellPage() {
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [cart, setCart] = useState([]); // เก็บรายการสินค้าในตะกร้า: [{ product, quantity }]
+  const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState({ type: '', text: '' });
 
-  // โหลดรายการสินค้าทั้งหมดเมื่อเปิดหน้า
   useEffect(() => {
     fetchProducts();
   }, []);
@@ -31,7 +30,6 @@ export default function SellPage() {
     setLoading(false);
   }
 
-  // เพิ่มสินค้าลงตะกร้า (ถ้ามีอยู่แล้วให้บวกจำนวนเพิ่ม)
   function addToCart(product) {
     setStatusMessage({ type: '', text: '' });
 
@@ -59,7 +57,6 @@ export default function SellPage() {
     });
   }
 
-  // ปรับจำนวนสินค้าในตะกร้า (+ หรือ -)
   function updateCartQuantity(productId, newQty) {
     setStatusMessage({ type: '', text: '' });
     if (newQty <= 0) {
@@ -84,60 +81,36 @@ export default function SellPage() {
     );
   }
 
-  // ลบสินค้าออกจากตะกร้า
   function removeFromCart(productId) {
     setCart((prevCart) => prevCart.filter((item) => item.product.id !== productId));
   }
 
-  // คำนวณยอดรวมสุทธิทั้งหมด และจำนวนชิ้นรวม
   const grandTotal = cart.reduce(
     (sum, item) => sum + Number(item.product.price) * item.quantity,
     0
   );
   const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // =========================================================================
-  // [ส่วนที่เพิ่มใหม่ 1] ฟังก์ชันส่งข้อความเข้า Telegram API (ปลอดภัยด้วย try-catch)
-  // =========================================================================
+  // ยิงข้อความผ่าน API Route ฝั่ง Server (/api/telegram) เพื่อความปลอดภัยของ Token
   async function sendTelegramMessage(messageText) {
-    const TELEGRAM_BOT_TOKEN = process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
-    const TELEGRAM_CHAT_ID = process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
-
-    // หากไม่ได้ตั้งค่า Environment Variables ให้ข้ามไปเงียบๆ ไม่ทำให้ระบบพัง
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-      console.warn('ไม่ได้ตั้งค่า NEXT_PUBLIC_TELEGRAM_BOT_TOKEN หรือ NEXT_PUBLIC_TELEGRAM_CHAT_ID');
-      return;
-    }
-
     try {
-      const response = await fetch(
-        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            chat_id: TELEGRAM_CHAT_ID,
-            text: messageText,
-            parse_mode: 'HTML',
-          }),
-        }
-      );
+      const response = await fetch('/api/telegram', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ messageText }),
+      });
 
       if (!response.ok) {
         const errorData = await response.json();
-        console.error('Telegram API ตอบกลับผิดพลาด:', errorData);
+        console.error('Telegram API Route ตอบกลับผิดพลาด:', errorData);
       }
     } catch (error) {
-      // ดักจับ Error กรณีเน็ตหลุดหรือยิง API ไม่สำเร็จ เพื่อไม่ให้กระทบหน้าเว็บขายสินค้า
       console.error('ส่งการแจ้งเตือน Telegram ไม่สำเร็จ:', error);
     }
   }
 
-  // =========================================================================
-  // [ส่วนที่เพิ่มใหม่ 2] ฟังก์ชันจัดการแจ้งเตือน Order เข้า และแจ้งเตือน Stock เหลือน้อย
-  // =========================================================================
   async function notifyTelegramAfterSale(soldItemsList) {
     const timeFormatted = new Date().toLocaleString('th-TH', {
       year: 'numeric',
@@ -152,7 +125,7 @@ export default function SellPage() {
       const itemTotal = Number(item.product.price) * item.quantity;
       const remainingStock = item.newStock;
 
-      // งานที่ 1: แจ้งเตือน Order เข้า (New Order Alert) รูปแบบ HTML
+      // งานที่ 1: แจ้งเตือน Order เข้า
       const orderMessage =
         `🛍️ <b>มีรายการขายใหม่!</b>\n` +
         `- สินค้า: ${item.product.name}\n` +
@@ -163,7 +136,7 @@ export default function SellPage() {
 
       await sendTelegramMessage(orderMessage);
 
-      // งานที่ 2: แจ้งเตือน Stock เหลือน้อย (Low Stock Alert เมื่อ Stock <= 5)
+      // งานที่ 2: แจ้งเตือน Stock เหลือน้อย (Stock <= 5)
       if (remainingStock <= 5) {
         const lowStockMessage =
           `🚨 <b>[เตือนภัย] สต๊อกสินค้าใกล้หมด!</b>\n` +
@@ -176,7 +149,6 @@ export default function SellPage() {
     }
   }
 
-  // ยืนยันการขายทั้งหมดในตะกร้า
   async function handleCheckout() {
     if (cart.length === 0) return;
 
@@ -185,7 +157,6 @@ export default function SellPage() {
 
     const now = new Date().toISOString();
 
-    // 1. เตรียมข้อมูลสำหรับบันทึกลงตาราง sales ทีเดียวทุกรายการ
     const salesRecords = cart.map((item) => ({
       product_id: item.product.id,
       product_name: item.product.name,
@@ -202,7 +173,6 @@ export default function SellPage() {
       return;
     }
 
-    // 2. ตัดสต็อกสินค้าทีละรายการในตาราง products และเก็บค่าสต็อกหลังตัดไว้ส่งแจ้งเตือน
     const completedItems = [];
     for (const item of cart) {
       const newStock = item.product.stock - item.quantity;
@@ -223,10 +193,8 @@ export default function SellPage() {
       completedItems.push({ ...item, newStock });
     }
 
-    // 3. [ส่วนที่เพิ่มใหม่] ส่งแจ้งเตือนเข้า Telegram Channel หลังตัดสต็อกสำเร็จ
     await notifyTelegramAfterSale(completedItems);
 
-    // 4. แจ้งเตือนสำเร็จ ล้างตะกร้า และอัปเดตข้อมูลสินค้าล่าสุด
     setStatusMessage({
       type: 'success',
       text: `ชำระเงินและบันทึกการขายสำเร็จ! (${cart.length} รายการ ยอดรวม ${grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท)`,
@@ -236,7 +204,6 @@ export default function SellPage() {
     setSubmitting(false);
   }
 
-  // กรองสินค้าตามคำค้นหา (ชื่อ หรือ SKU)
   const filteredProducts = products.filter(
     (p) =>
       p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -245,7 +212,7 @@ export default function SellPage() {
 
   return (
     <div>
-      {/* ส่วนที่ 1: แถบสรุปยอดเงินรวมขนาดใหญ่ด้านบนสุด */}
+      {/* แถบสรุปยอดเงินรวมขนาดใหญ่ด้านบนสุด */}
       <div
         className="card"
         style={{
@@ -308,7 +275,7 @@ export default function SellPage() {
         </div>
       )}
 
-      {/* ส่วนที่ 2: พื้นที่ทำงานแบ่ง 2 คอลัมน์ ซ้าย (เลือกสินค้า) - ขวา (รายการในบิล) */}
+      {/* พื้นที่ทำงานแบ่ง 2 คอลัมน์ */}
       <div
         style={{
           display: 'grid',
@@ -396,7 +363,6 @@ export default function SellPage() {
                       </div>
                     </div>
 
-                    {/* ป้ายบอกจำนวนที่อยู่ในตะกร้าแล้ว */}
                     {inCartItem && (
                       <span
                         style={{
@@ -421,7 +387,7 @@ export default function SellPage() {
           )}
         </div>
 
-        {/* ฝั่งขวา: รายการสินค้าในบิลปัจจุบัน และปุ่มยืนยัน */}
+        {/* ฝั่งขวา: รายการสินค้าในบิลปัจจุบัน */}
         <div className="card" style={{ marginBottom: 0 }}>
           <h2>2. รายการในบิลปัจจุบัน</h2>
 
@@ -458,7 +424,6 @@ export default function SellPage() {
                         gap: '0.5rem',
                       }}
                     >
-                      {/* ชื่อสินค้าและราคาต่อหน่วย */}
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{item.product.name}</div>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -467,7 +432,6 @@ export default function SellPage() {
                         </div>
                       </div>
 
-                      {/* ปุ่มปรับจำนวน - / + */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                         <button
                           type="button"
@@ -502,12 +466,10 @@ export default function SellPage() {
                         </button>
                       </div>
 
-                      {/* ราคารวมย่อยของรายการนี้ */}
                       <div style={{ minWidth: '85px', textAlign: 'right', fontWeight: 700 }}>
                         {subtotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </div>
 
-                      {/* ปุ่มลบรายการ */}
                       <button
                         type="button"
                         onClick={() => removeFromCart(item.product.id)}
@@ -527,7 +489,6 @@ export default function SellPage() {
                 })}
               </div>
 
-              {/* ปุ่มยืนยันการขาย */}
               <button
                 type="button"
                 className="btn-primary"
