@@ -368,4 +368,187 @@ export default function SellPage() {
                       opacity: isOutOfStock ? 0.6 : 1,
                       display: 'flex',
                       flexDirection: 'column',
-                      justifyContent:
+                      justifyContent: 'space-between',
+                      minHeight: '105px',
+                      position: 'relative',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#0f172a', marginBottom: '0.25rem' }}>
+                        {product.name}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        {product.sku ? `SKU: ${product.sku}` : ''}
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '0.75rem' }}>
+                      <div style={{ fontWeight: 700, color: 'var(--primary-color)', fontSize: '1rem' }}>
+                        {Number(product.price).toLocaleString('th-TH', { minimumFractionDigits: 2 })} ฿
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '0.75rem',
+                          color: isOutOfStock ? 'var(--danger-color)' : 'var(--text-secondary)',
+                        }}
+                      >
+                        {isOutOfStock ? 'สินค้าหมด' : `เหลือ ${product.stock} ${product.unit}`}
+                      </div>
+                    </div>
+
+                    {/* ป้ายบอกจำนวนที่อยู่ในตะกร้าแล้ว */}
+                    {inCartItem && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: '-8px',
+                          right: '-8px',
+                          backgroundColor: 'var(--primary-color)',
+                          color: '#fff',
+                          borderRadius: '999px',
+                          padding: '0.15rem 0.55rem',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {inCartItem.quantity}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ฝั่งขวา: รายการสินค้าในบิลปัจจุบัน และปุ่มยืนยัน */}
+        <div className="card" style={{ marginBottom: 0 }}>
+          <h2>2. รายการในบิลปัจจุบัน</h2>
+
+          {cart.length === 0 ? (
+            <div
+              style={{
+                textAlign: 'center',
+                padding: '3rem 1rem',
+                color: 'var(--text-secondary)',
+                backgroundColor: '#f8fafc',
+                borderRadius: '8px',
+                border: '1px dashed var(--border-color)',
+              }}
+            >
+              ยังไม่มีสินค้าในบิล
+              <br />
+              <span style={{ fontSize: '0.85rem' }}>กรุณาเลือกสินค้าจากรายการด้านซ้าย</span>
+            </div>
+          ) : (
+            <>
+              <div style={{ maxHeight: '360px', overflowY: 'auto', marginBottom: '1.25rem' }}>
+                {cart.map((item) => {
+                  const subtotal = Number(item.product.price) * item.quantity;
+
+                  return (
+                    <div
+                      key={item.product.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '0.75rem 0',
+                        borderBottom: '1px solid var(--border-color)',
+                        gap: '0.5rem',
+                      }}
+                    >
+                      {/* ชื่อสินค้าและราคาต่อหน่วย */}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{item.product.name}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          {Number(item.product.price).toLocaleString('th-TH', { minimumFractionDigits: 2 })} ฿ /{' '}
+                          {item.product.unit}
+                        </div>
+                      </div>
+
+                      {/* ปุ่มปรับจำนวน - / + */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity(item.product.id, item.quantity - 1)}
+                          style={{
+                            width: '30px',
+                            height: '30px',
+                            padding: 0,
+                            backgroundColor: '#f1f5f9',
+                            border: '1px solid var(--border-color)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          −
+                        </button>
+                        <span style={{ minWidth: '28px', textAlign: 'center', fontWeight: 600 }}>
+                          {item.quantity}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity(item.product.id, item.quantity + 1)}
+                          style={{
+                            width: '30px',
+                            height: '30px',
+                            padding: 0,
+                            backgroundColor: '#f1f5f9',
+                            border: '1px solid var(--border-color)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      {/* ราคารวมย่อยของรายการนี้ */}
+                      <div style={{ minWidth: '85px', textAlign: 'right', fontWeight: 700 }}>
+                        {subtotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                      </div>
+
+                      {/* ปุ่มลบรายการ */}
+                      <button
+                        type="button"
+                        onClick={() => removeFromCart(item.product.id)}
+                        title="ลบรายการ"
+                        style={{
+                          backgroundColor: 'transparent',
+                          color: 'var(--danger-color)',
+                          padding: '0.25rem 0.45rem',
+                          fontSize: '1rem',
+                          fontWeight: 700,
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ปุ่มยืนยันการขาย */}
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleCheckout}
+                disabled={submitting}
+                style={{
+                  width: '100%',
+                  padding: '0.95rem',
+                  fontSize: '1.15rem',
+                  fontWeight: 700,
+                  backgroundColor: 'var(--success-color)',
+                }}
+              >
+                {submitting
+                  ? 'กำลังบันทึกการขาย...'
+                  : `ยืนยันการขาย (${grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท)`}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
